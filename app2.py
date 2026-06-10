@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- 1. 學生名單資料庫 ---
 groups_data = {
@@ -13,36 +14,55 @@ groups_data = {
     "組別六": ["邱湘芸", "謝馨儀", "陳詠晴", "陳樂芯", "彭立喬", "林恒萱", "邱怡瑄", "陳廷瑀"]
 }
 
-# --- 2. 網頁基本設定 ---
-st.set_page_config(page_title="課程組內互評系統", layout="centered")
-st.title("📊 課程組內互評與統計系統")
+# --- 2. 安全連線到 Google Sheets (使用 gspread) ---
+@st.cache_resource
+def get_gspread_client():
+    try:
+        # 從 Streamlit Secrets 讀取完整的 Google 憑證資訊
+        creds_dict = st.secrets["gcp_service_account"]
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Google 憑證連線失敗，請檢查 Secrets 設定。錯誤：{e}")
+        return None
 
-# 初始化 Session State (用來控制是否顯示成功畫面)
-if "is_submitted" not in st.session_state:
-    st.session_state.is_submitted = False
+gc = get_gspread_client()
 
-# 建立兩個切換分頁
-tab_student, tab_admin = st.tabs(["📝 學生評分介面", "📈 調查成果統計 (教師專用)"])
+def get_sheet():
+    if gc is None: return None
+    try:
+        # 從 Secrets 讀取試算表金鑰或網址
+        spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+        return gc.open_by_url(spreadsheet_url).sheet1
+    except Exception as e:
+        st.error(f"無法開啟指定的 Google 試算表，請確認網址正確且已將試算表共用給憑證信箱。錯誤：{e}")
+        return None
 
-# 建立 Google Sheets 連線物件
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-except Exception as e:
-    conn = None
-
-# 讀取 Google Sheets 既有資料的函數
 def get_cloud_data():
-    if conn is None:
+    sheet = get_sheet()
+    if sheet is None:
         return pd.DataFrame()
     try:
-        # ttl="0s" 代表不使用快取，每次都抓最新資料
-        df = conn.read(ttl="0s")
-        # 如果是全新的空表，做防呆欄位初始化
-        if df.empty or "評分者姓名" not in df.columns:
+        records = sheet.get_all_records()
+        df = pd.DataFrame(records)
+        if df.empty:
             return pd.DataFrame(columns=["填寫時間", "來源IP", "評分者學號", "評分者姓名", "所屬組別", "被評分者", "給予分數", "保證說明"])
         return df
     except:
         return pd.DataFrame(columns=["填寫時間", "來源IP", "評分者學號", "評分者姓名", "所屬組別", "被評分者", "給予分數", "保證說明"])
+
+# --- 3. 網頁基本設定 ---
+st.set_page_config(page_title="課程組內互評系統", layout="centered")
+st.title("📊 課程組內互評與統計系統")
+
+if "is_submitted" not in st.session_state:
+    st.session_state.is_submitted = False
+
+tab_student, tab_admin = st.tabs(["📝 學生評分介面", "📈 調查成果統計 (教師專用)"])
 
 # ==========================================
 # 分頁一：學生評分介面
@@ -63,7 +83,6 @@ with tab_student:
                 
     else:
         st.header("填寫互評表單")
-        
         col1, col2 = st.columns(2)
         with col1:
             student_id = st.text_input("1. 請輸入您的學號：")
@@ -77,33 +96,18 @@ with tab_student:
             if student_name != "請選擇" and student_id:
                 st.divider()
                 st.subheader(f"👥 請對【{student_group}】的其他組員進行評分")
-                st.info("""
-                **評分標準：**
-                * 0分：都沒出現課堂也沒參與作業
-                * 1分：作業參與程度 20% 以下(至少1人)
-                * 2分：作業參與程度 20~60%(至少1人)
-                * 3分：作業參與程度 60~90%(至少1人)
-                * 4分：作業參與程度 90% 以上
-                """)
+                st.info("**評分標準：**\n* 0分：都沒出現課堂也沒參與作業\n* 1分：作業參與程度 20% 以下\n* 2分：作業參與程度 20~60%\n* 3分：作業參與程度 60~90%\n* 4分：作業參與程度 90% 以上")
 
                 peers = [m for m in members if m != student_name]
                 
                 with st.form(key=f"eval_form_{student_group}_{student_name}"):
                     scores = {}
-
                     for peer in peers:
-                        scores[peer] = st.radio(
-                            f"請評分【{peer}】的參與度：", 
-                            options=[0, 1, 2, 3, 4], 
-                            index=3, 
-                            horizontal=True, 
-                            key=f"radio_{student_group}_{student_name}_{peer}"
-                        )
+                        scores[peer] = st.radio(f"請評分【{peer}】的參與度：", options=[0, 1, 2, 3, 4], index=3, horizontal=True, key=f"radio_{student_group}_{student_name}_{peer}")
 
                     st.divider()
                     st.markdown("**例外情況說明區**")
-                    explanation = st.text_area("若您的評分無法滿足「除0、4分外，1、2、3分至少需有一名」的規定，請務必在此填寫「保證說明」(例：本人保證本組同學作業皆為平均分配，沒有差異性)：")
-                    
+                    explanation = st.text_area("若您的評分無法滿足「除0、4分外，1、2、3分至少需有一名」的規定，請務必在此填寫「保證說明」：")
                     submit_btn = st.form_submit_button("🚀 送出評分", type="primary")
 
                 if submit_btn:
@@ -117,41 +121,24 @@ with tab_student:
                         st.error(f"⚠️ 送出失敗：您的評分尚未滿足規定（目前缺少給予：{missing_scores}分）。請在上方文字框填寫「保證說明」後再次送出。")
                     else:
                         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        # 擷取雲端部署環境的使用者 IP
                         user_ip = "未知 IP"
                         try:
                             if hasattr(st, "context") and hasattr(st.context, "headers"):
                                 user_ip = st.context.headers.get("X-Forwarded-For", st.context.headers.get("Remote-Addr", "雲端環境"))
-                        except:
-                            pass
+                        except: pass
 
-                        new_rows = []
-                        for peer, score in scores.items():
-                            new_rows.append({
-                                "填寫時間": current_time,
-                                "來源IP": user_ip,
-                                "評分者學號": student_id,
-                                "評分者姓名": student_name,
-                                "所屬組別": student_group,
-                                "被評分者": peer,
-                                "給予分數": int(score),
-                                "保證說明": explanation.strip()
-                            })
-                        df_new = pd.DataFrame(new_rows)
-                        
-                        # 從雲端讀取舊資料並合併
-                        df_existing = get_cloud_data()
-                        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                        
-                        # 🚀 將合併後的完整資料更新回 Google Sheets
-                        if conn is not None:
+                        sheet = get_sheet()
+                        if sheet is not None:
                             try:
-                                conn.update(data=df_combined)
+                                # 一筆一筆將新列附加到 Google 試算表底部
+                                for peer, score in scores.items():
+                                    sheet.append_row([
+                                        current_time, user_ip, student_id, student_name, student_group, peer, int(score), explanation.strip()
+                                    ])
                                 st.session_state.is_submitted = True
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"寫入 Google 試算表失敗，請聯繫管理員。錯誤：{e}")
+                                st.error(f"寫入 Google 試算表失敗。錯誤：{e}")
                         else:
                             st.error("系統未連結 Google 試算表設定。")
 
@@ -166,7 +153,6 @@ with tab_admin:
         df_results = get_cloud_data()
         submitted_names = set(df_results["評分者姓名"].unique()) if not df_results.empty else set()
 
-        # 📊 進度與催繳追蹤
         progress_records = []
         for group, names in groups_data.items():
             for name in names:
