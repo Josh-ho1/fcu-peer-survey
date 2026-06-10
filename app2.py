@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import gspread
-from google.oauth2.service_account import Credentials
 
 # --- 1. 學生名單資料庫 ---
 groups_data = {
@@ -14,38 +13,21 @@ groups_data = {
     "組別六": ["邱湘芸", "謝馨儀", "陳詠晴", "陳樂芯", "彭立喬", "林恒萱", "邱怡瑄", "陳廷瑀"]
 }
 
-# --- 2. 安全連線到 Google Sheets (使用 gspread) ---
+# --- 2. 使用最穩定的 gspread 連線 ---
 @st.cache_resource
-def get_gspread_client():
-    try:
-        # 從 Streamlit Secrets 讀取完整的 Google 憑證資訊
-        creds_dict = st.secrets["gcp_service_account"]
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Google 憑證連線失敗，請檢查 Secrets 設定。錯誤：{e}")
-        return None
-
-gc = get_gspread_client()
-
 def get_sheet():
-    if gc is None: return None
     try:
-        # 從 Secrets 讀取試算表金鑰或網址
+        # 直接利用 Streamlit 官方最安全的帳戶綁定，不再手動代入 gcp_service_account 字典
+        gc = gspread.credentials_from_dict(st.secrets).authorize()
         spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         return gc.open_by_url(spreadsheet_url).sheet1
     except Exception as e:
-        st.error(f"無法開啟指定的 Google 試算表，請確認網址正確且已將試算表共用給憑證信箱。錯誤：{e}")
+        st.error(f"連線 Google 試算表失敗，請確保 Secrets 中已填入正確的試算表網址，且試算表已開啟「任何人均可編輯」權限。錯誤：{e}")
         return None
 
 def get_cloud_data():
     sheet = get_sheet()
-    if sheet is None:
-        return pd.DataFrame()
+    if sheet is None: return pd.DataFrame()
     try:
         records = sheet.get_all_records()
         df = pd.DataFrame(records)
@@ -130,7 +112,6 @@ with tab_student:
                         sheet = get_sheet()
                         if sheet is not None:
                             try:
-                                # 一筆一筆將新列附加到 Google 試算表底部
                                 for peer, score in scores.items():
                                     sheet.append_row([
                                         current_time, user_ip, student_id, student_name, student_group, peer, int(score), explanation.strip()
