@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import gspread
-from google.oauth2.service_account import Credentials
 
 # --- 1. 學生名單資料庫 ---
 groups_data = {
@@ -14,46 +13,22 @@ groups_data = {
     "組別六": ["邱湘芸", "謝馨儀", "陳詠晴", "陳樂芯", "彭立喬", "林恒萱", "邱怡瑄", "陳廷瑀"]
 }
 
-# --- 2. 安全連線到 Google Sheets (使用 gspread) ---
+# --- 2. 免金鑰、直接透過公開匿名權限讀寫 Google Sheets ---
 @st.cache_resource
-def get_gspread_client():
-    try:
-        creds_dict = st.secrets["gcp_service_account"]
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Google 憑證連線失敗，請檢查 Secrets 設定。錯誤：{e}")
-        return None
-
-gc = get_gspread_client()
-
 def get_sheet():
-    if gc is None: return None
     try:
-        # 【修正這裡】改用最安全的字串直接讀取，避開 connections 的多層解析問題
-        if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-            spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        else:
-            # 萬一解析失敗，直接嘗試尋找最底層的 url
-            spreadsheet_url = st.secrets.get("spreadsheet", "")
-            
-        # 如果還是空的，就手動寫死您這張試算表的網址，確保萬無一失
-        if not spreadsheet_url:
-            spreadsheet_url = "https://docs.google.com/spreadsheets/d/10T-wSj_9V3C9F4bM64_H7yD7m-k17-WshJ9A8/edit#gid=0"
-            
+        # 使用 gspread 的 🌟 匿名連線模式 (完全不需任何 credentials)
+        gc = gspread.public()
+        # 老師您的試算表網址
+        spreadsheet_url = "https://docs.google.com/spreadsheets/d/10T-wSj_9V3C9F4bM64_H7yD7m-k17-WshJ9A8/edit#gid=0"
         return gc.open_by_url(spreadsheet_url).sheet1
     except Exception as e:
-        st.error(f"無法開啟指定的 Google 試算表，請確認網址正確且已將試算表共用給憑證信箱。錯誤：{e}")
+        st.error(f"連線 Google 試算表失敗。請確認您的 Google 試算表共用權限已開啟為「知道連結的任何人都能編輯」。錯誤：{e}")
         return None
 
 def get_cloud_data():
     sheet = get_sheet()
-    if sheet is None:
-        return pd.DataFrame()
+    if sheet is None: return pd.DataFrame()
     try:
         records = sheet.get_all_records()
         df = pd.DataFrame(records)
@@ -61,7 +36,7 @@ def get_cloud_data():
             return pd.DataFrame(columns=["填寫時間", "來源IP", "評分者學號", "評分者姓名", "所屬組別", "被評分者", "給予分數", "保證說明"])
         return df
     except:
-        return pd.DataFrame(columns=["填寫時間", "來源IP", "評分者學號", "評分學號", "評分者姓名", "所屬組別", "被評分者", "給予分數", "保證說明"])
+        return pd.DataFrame(columns=["填寫時間", "來源IP", "評分者學號", "評分者姓名", "所屬組別", "被評分者", "給予分數", "保證說明"])
 
 # --- 3. 網頁基本設定 ---
 st.set_page_config(page_title="課程組內互評系統", layout="centered")
@@ -147,7 +122,7 @@ with tab_student:
                             except Exception as e:
                                 st.error(f"寫入 Google 試算表失敗。錯誤：{e}")
                         else:
-                            st.error("系統目前無法正確開啟 Google 試算表，請確認後台網址設定。")
+                            st.error("系統目前無法開啟 Google 試算表，請確認表單共用權限。")
 
 # ==========================================
 # 分頁二：調查成果統計 (教師專用)
