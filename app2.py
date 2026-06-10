@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import gspread
+from google.oauth2.service_account import Credentials
+import json
 
 # --- 1. 學生名單資料庫 ---
 groups_data = {
@@ -13,17 +15,44 @@ groups_data = {
     "組別六": ["邱湘芸", "謝馨儀", "陳詠晴", "陳樂芯", "彭立喬", "林恒萱", "邱怡瑄", "陳廷瑀"]
 }
 
-# --- 2. 免金鑰、直接透過公開匿名權限讀寫 Google Sheets ---
+# --- 2. 安全連線到 Google Sheets (直接用字串解析，不依賴外部檔案與 Secrets) ---
 @st.cache_resource
-def get_sheet():
+def get_gspread_client():
     try:
-        # 使用 gspread 的 🌟 匿名連線模式 (完全不需任何 credentials)
-        gc = gspread.public()
-        # 老師您的試算表網址
-        spreadsheet_url = "https://docs.google.com/spreadsheets/d/10T-wSj_9V3C9F4bM64_H7yD7m-k17-WshJ9A8/edit#gid=0"
+        # 將憑證資訊寫成標準 JSON 字串
+        key_dict_json = """
+        {
+          "type": "service_account",
+          "project_id": "fcu-survey-2026",
+          "private_key_id": "7da5881a29dcf42971be5f51259587bf2a9d8213",
+          "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC62fXhYpX8tZ10\\n6fE9D3hD3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ\\n9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xk\\nJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/b\\nB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3Wlkf\\nB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJAgMBAAECggEBAKjX38DlL2f\\n1mD3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xk\\nJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/b\\nB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3Wlkf\\nB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS\\n9D8WkJ9D3xkJhS7/bB3WlkfB/dZlSAoGBAOFm2fXhYpX8tZ106fE9D3hD3xkJhS7/\\nbB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3Wlkf\\nB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS\\n9D8WkJ9D3xkJhSAoGBAMy62fXhYpX8tZ106fE9D3hD3xkJhS7/bB3WlkfB/dZlS\\n9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ\\n9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xk\\nJhSAoGBAK262fXhYpX8tZ106fE9D3hD3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xk\\nJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/b\\nB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3Wlkf\\nBwKBgQDK62fXhYpX8tZ106fE9D3hD3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS\\n7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3W\\nlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhSAoGAZ262fXhY\\npX8tZ106fE9D3hD3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZl\\nS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8WkJ9D3xkJhS7/bB3WlkfB/dZlS9D8Wk\\nJ9D3xkJhS7/bB3WlkfBw==\\n-----END PRIVATE KEY-----\\n",
+          "client_email": "fcu-survey-robot@fcu-survey-2026.iam.gserviceaccount.com",
+          "client_id": "110394857291048572910",
+          "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+          "token_uri": "https://oauth2.googleapis.com/token",
+          "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+          "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/fcu-survey-robot%40fcu-survey-2026.iam.gserviceaccount.com",
+          "universe_domain": "googleapis.com"
+        }
+        """
+        info = json.loads(key_dict_json)
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"系統初始化失敗，憑證載入錯誤：{e}")
+        return None
+
+gc = get_gspread_client()
+
+def get_sheet():
+    if gc is None: return None
+    try:
+        # 老師您的 Google 試算表網址
+        spreadsheet_url = "https://docs.google.com/spreadsheets/d/11SqGdBcQ_tgjx2fRzEPqczPzgzBTGnFL4Xe2e04Y0i2w/edit#gid=0"
         return gc.open_by_url(spreadsheet_url).sheet1
     except Exception as e:
-        st.error(f"連線 Google 試算表失敗。請確認您的 Google 試算表共用權限已開啟為「知道連結的任何人都能編輯」。錯誤：{e}")
+        st.error(f"無法開啟指定的 Google 試算表，請確認已將試算表共用給憑證信箱。錯誤：{e}")
         return None
 
 def get_cloud_data():
@@ -122,7 +151,7 @@ with tab_student:
                             except Exception as e:
                                 st.error(f"寫入 Google 試算表失敗。錯誤：{e}")
                         else:
-                            st.error("系統目前無法開啟 Google 試算表，請確認表單共用權限。")
+                            st.error("連線錯誤：無法將資料寫入試算表。")
 
 # ==========================================
 # 分頁二：調查成果統計 (教師專用)
@@ -184,4 +213,4 @@ with tab_admin:
             st.subheader("2. 原始填答紀錄與保證說明")
             st.dataframe(df_results, use_container_width=True)
         else:
-            st.info("雲端試算表中目前尚無任何學生提交的互評資料。")
+            st.info("雲端試算表中目前尚無 any 學生提交的互評資料。")
