@@ -131,7 +131,7 @@ with tab_admin:
     st.header("系統管理與統計成果")
     admin_pw = st.text_input("請輸入管理員密碼以檢視成績：", type="password", key="admin_password_input")
     
-    if admin_pw == "fcu3069":
+    if admin_pw == "fcu609":
         df_results = get_cloud_data()
         submitted_names = set(df_results["評分者姓名"].unique()) if not df_results.empty else set()
 
