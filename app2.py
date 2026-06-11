@@ -20,7 +20,7 @@ def get_sheet():
         # 透過 Streamlit 官方的 st.secrets 自動代入完整 GCP 憑證
         gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
         # 您試算表的網址
-        spreadsheet_url = "https://docs.google.com/spreadsheets/d/11SqGdBcQ_tgjx2fRzEPqczPzgzBTGnFL4Xe2e04Y0i2w/edit#gid=0"
+        spreadsheet_url = "https://docs.google.com/spreadsheets/d/1f1TqNXAA3HNDf0KxMCpwE565fCRezDLRWACYaE16mO0/edit?usp=drive_link"
         return gc.open_by_url(spreadsheet_url).sheet1
     except Exception as e:
         st.error(f"連線 Google 試算表失敗，請確保後台 Secrets 已正確填寫。錯誤：{e}")
